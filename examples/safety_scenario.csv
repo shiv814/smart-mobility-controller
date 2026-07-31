@@ -1,0 +1,7 @@
+# timestamp,command,front,rear,left,right,battery,e_stop,seat
+0,forward,200,200,200,200,24.5,0,1
+100,forward,100,200,200,200,24.5,0,1
+200,forward,60,200,200,200,24.5,0,1
+300,forward,20,200,200,200,24.5,0,1
+400,reverse,200,200,200,200,21.5,0,1
+500,reverse,200,200,200,200,21.5,1,1
