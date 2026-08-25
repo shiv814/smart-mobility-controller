@@ -1,150 +1,121 @@
-# Smart Mobility Controller
+<div align="center">
+  <img src="assets/mobility-hero.svg" alt="Smart Mobility Controller" width="100%" />
 
-Smart Mobility Controller is a safety-oriented C++17 control core for a powered mobility prototype. Version 2 grows the original five-command PWM ramp into a layered controller with joystick mixing, configurable drive modes, obstacle-aware speed limiting, battery derating, seat and emergency interlocks, command watchdogs, latched hardware faults, direction-reversal braking, telemetry, event history, a scenario simulator, and an Arduino integration sketch.
+  [![build](https://github.com/shiv814/smart-mobility-controller/actions/workflows/build.yml/badge.svg)](https://github.com/shiv814/smart-mobility-controller/actions/workflows/build.yml)
+  ![C++](https://img.shields.io/badge/C%2B%2B-17-00599C?logo=cplusplus&logoColor=white)
+  ![Arduino](https://img.shields.io/badge/Arduino-integration-00878F?logo=arduino&logoColor=white)
+  ![CI](https://img.shields.io/badge/Debug%20%2B%20Release-Linux%20%7C%20Windows%20%7C%20macOS-16a34a)
 
-> This repository is an engineering portfolio prototype, not certified medical-device software. Real mobility hardware requires formal hazard analysis, redundant safety systems, hardware interlocks, electrical review, verification, validation, and regulatory compliance.
+  **A safety-oriented C++17 motion-control core and Arduino integration prototype with fail-safe state handling, command arbitration, drive-mode control, obstacle/battery interlocks, odometry, energy estimation, diagnostics and deterministic scenario testing.**
+</div>
 
-## Control features
+> [!CAUTION]
+> **Engineering portfolio prototype only.** This repository is not certified medical-device or powered-mobility software. Real hardware requires formal hazard analysis, redundant safety mechanisms, hardware interlocks, electrical/mechanical review, verification, validation and regulatory compliance.
 
-### Differential drive inputs
+---
 
-The controller accepts both discrete commands and normalized joystick coordinates:
+## Why this project is different
 
-- stop, forward, reverse, pivot left, pivot right
-- two-axis joystick mixing with configurable deadzone
-- output normalization so mixed commands stay inside the PWM envelope
+A motor demo becomes an engineering project when it answers uncomfortable questions: What happens when commands stop arriving? Can forward become reverse instantly? What wins if autonomous and user commands conflict? How does an emergency input preempt everything? What happens near an obstacle or at critical battery voltage? How can a test prove those transitions are deterministic?
 
-### Drive modes
+Version 3 builds around those questions rather than around feature count.
 
-- **Eco**: 55% nominal speed for controlled indoor movement
-- **Normal**: 80% nominal speed
-- **Sport**: 100% configured speed
+## Capability map
 
-Drive-mode scaling is combined with safety scaling rather than bypassing it.
+| Layer | Capabilities |
+|---|---|
+| Motion control | discrete commands, differential joystick mixing, PWM targets and brake output |
+| Drive profiles | Eco, Normal and Sport scaling with independent acceleration/deceleration |
+| Direction safety | braking before motor-direction reversal |
+| Watchdog | stale commands force a safe stopped state |
+| Environment | obstacle slowdown/stop and nearest-obstacle telemetry |
+| Power | low-voltage derating, critical-battery latch, SOC/reserve/range estimate |
+| Interlocks | emergency-stop, seat occupancy and sensor-validity behavior |
+| Fault state | latched critical faults with explicit safe clearing conditions |
+| Arbitration | priority + TTL requests from user, navigation and remote sources; emergency override |
+| Odometry | differential-drive pose/distance estimate from encoder ticks |
+| Diagnostics | safety-state exposure, timeouts, interventions, min battery/obstacle and JSON KPIs |
+| Simulation | deterministic CSV scenario runner plus v3 standalone feature demo |
+| Hardware boundary | Arduino I/O sketch wraps the portable host-tested controller |
 
-### Motion shaping
+## Architecture
 
-- separate acceleration and deceleration steps
-- controlled PWM ramping on every update
-- reversal guard that returns each motor to zero before changing direction
-- explicit braking state when a safety stop reaches zero output
+```mermaid
+flowchart LR
+  INPUTS[User / remote / navigation] --> ARB[Command arbiter]
+  ESTOP[E-stop] --> ARB
+  ARB --> CTRL[Controller]
+  SENSOR[Seat / obstacle / battery] --> CTRL
+  CTRL --> MOTOR[Motor output]
+  CTRL --> TEL[Telemetry]
+  ENCODER[Wheel encoders] --> ODO[Odometry]
+  BAT[Battery voltage] --> ENERGY[Energy estimator]
+  TEL --> DIAG[Diagnostics / safety KPIs]
+```
 
-## Safety envelope
-
-### Command watchdog
-
-A stale command automatically produces a stopped state and `command-timeout` fault report. A fresh command clears this transient condition.
-
-### Obstacle response
-
-Four directional distance measurements support context-aware protection:
-
-- full speed beyond the slowdown distance
-- proportional derating inside the slowdown zone
-- complete stop inside the stop distance
-- forward/reverse/turn/joystick commands choose the relevant sensors
-
-### Battery management
-
-- estimated battery percentage from critical and full-voltage calibration
-- low-battery speed derating
-- latched critical-battery fault requiring safe voltage and an explicit clear
-
-### Interlocks and faults
-
-- emergency stop is latched
-- invalid or negative sensor data is latched as a sensor fault
-- an unoccupied seat causes a transient stop
-- latched faults cannot be cleared while unsafe conditions remain
-- fault, state, and command transitions are retained in a bounded event log
-
-## Telemetry
-
-Each update records:
-
-- sequence and timestamp
-- command and drive mode
-- ready, degraded, stopped, or fault safety state
-- current and latched fault status
-- left/right PWM and brake state
-- requested and safety speed scales
-- battery percentage
-- nearest relevant obstacle
-- watchdog status
-
-## Build and test
+## Quick start
 
 ```bash
-cmake -S . -B build
-cmake --build build
-ctest --test-dir build --output-on-failure
+git clone https://github.com/shiv814/smart-mobility-controller.git
+cd smart-mobility-controller
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-The host tests verify acceleration, braking-before-reversal, obstacle slowdown and stopping, timeout recovery, emergency-stop latching, safe fault clearing, battery derating, critical battery handling, joystick mixing, deadzone behaviour, seat interlock, invalid-sensor latching, event-log retention, and configuration validation.
-
-## Scenario simulator
-
-Run the built-in demonstration:
+Run the deterministic scenario simulator with `examples/safety_scenario.csv`, or run the v3 module demo:
 
 ```bash
-./build/mobility_simulator --demo
+./build/mobility_v3_demo
 ```
 
-Run a CSV scenario:
+## Command arbitration
 
-```bash
-./build/mobility_simulator examples/safety_scenario.csv
-```
+`CommandArbiter` accepts time-bounded requests with source, priority, issuance time and TTL. Expired commands disappear, highest valid priority wins, ties prefer the newest command, and emergency stop bypasses normal arbitration. If nothing is valid, the fallback is Stop.
 
-Scenario columns are:
+This deliberately avoids letting a stale autonomous command survive forever.
 
-```text
-timestamp_ms,command,front_cm,rear_cm,left_cm,right_cm,battery_voltage,e_stop,seat_occupied
-```
+## Energy and reserve estimation
 
-The simulator emits CSV telemetry suitable for plotting, regression comparison, or spreadsheet analysis.
+`EnergyEstimator` converts pack voltage into a bounded state-of-charge estimate, preserves a configurable energy reserve, and estimates range using either recent or nominal Wh/km. It is transparent and tunable; it is not presented as a battery-management system.
 
-## Library example
+## Differential odometry
 
-```cpp
-#include "controller.hpp"
+`DifferentialOdometry` integrates left/right encoder deltas using track width, wheel diameter and ticks/revolution. The output is a local planar estimate (`x`, `y`, heading, cumulative distance), suitable for simulation/telemetry—not safety-rated localization.
 
-mobility::Controller controller;
-controller.set_drive_mode(mobility::DriveMode::Normal);
-controller.joystick(0.25, 0.8, 0);
+## Safety diagnostics
 
-mobility::SensorFrame sensors;
-sensors.front_distance_cm = 55.0;
-sensors.battery_voltage = 23.4;
+`DiagnosticMonitor` is read-only with respect to the controller. It summarizes operational exposure instead of changing motor state: ready/degraded/stopped/fault frames, timeouts, actual speed interventions, minimum observed obstacle/battery, fault counts and a simple safety-availability ratio.
 
-auto motors = controller.update(20, sensors);
-auto telemetry = controller.telemetry();
-```
-
-## Embedded integration
-
-`arduino/TeddyBearWheelchair.ino` shows how the architecture maps to joystick ADC inputs, an emergency-stop input, seat switch, motor PWM/direction pins, watchdog logic, and JSON serial telemetry. The portable host controller remains the tested reference model; production embedded integration should use a suitable build system and hardware abstraction layer so the same safety logic can be compiled directly for the target.
-
-## Project structure
+## Repository map
 
 ```text
 src/
-├── controller.hpp  # public domain types, configuration, telemetry, API
-├── controller.cpp  # state machine, safety envelope, motion shaping
-└── simulator.cpp   # deterministic CSV scenario runner
-arduino/
-└── TeddyBearWheelchair.ino
-examples/
-└── safety_scenario.csv
-tests/
-└── test_controller.cpp
+  controller.*     portable motion + safety state machine
+  simulator.cpp    CSV scenario simulator
+  arbitration.*    multi-source command arbitration
+  energy.*         SOC / reserve / range estimator
+  odometry.*       differential-drive state estimate
+  diagnostics.*    safety KPI aggregation
+  v3_demo.cpp      v3 feature smoke/demo
+arduino/            hardware integration sketch
+examples/           deterministic scenario inputs
+tests/              controller and v3 safety tests
+docs/               architecture, hazards and validation strategy
 ```
 
-## Suggested next engineering steps
+## Safety documentation
 
-- hardware-in-the-loop tests with mocked range and current sensors
-- wheel encoder feedback and closed-loop velocity control
-- redundant stop channels and independent watchdog hardware
-- fault-injection tests and requirements traceability
-- structured hazard analysis such as FMEA or STPA
-- recorded telemetry replay and coverage-guided scenario generation
+- [Architecture](docs/ARCHITECTURE.md)
+- [Prototype hazard analysis](docs/HAZARD_ANALYSIS.md)
+- [Validation strategy](docs/VALIDATION.md)
+- [Contributing](CONTRIBUTING.md)
+
+The hazard document is intentionally explicit about controls **not** implemented in software. A strong safety project should document its boundaries, not hide them.
+
+## Verification
+
+CI builds Debug and Release on Linux, Windows and macOS and executes the original controller tests, v3 safety-module tests, and the v3 demo smoke test.
+
+## License
+MIT © Shivam Patel
